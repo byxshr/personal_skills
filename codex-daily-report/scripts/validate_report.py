@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -29,11 +30,18 @@ REQUIRED_SECTION_KEYWORDS = [
     "待办",
 ]
 
+TODO_PLACEHOLDER_PATTERN = re.compile(r"暂无|无明确|无待办|没有明确|none", flags=re.IGNORECASE)
+TODO_STATUS_PATTERN = re.compile(r"已完成|部分完成|未完成|无法判断")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("collector_json", help="Path to collect_codex_activity.py JSON output")
     parser.add_argument("report_md", help="Path to generated Markdown report")
+    parser.add_argument(
+        "--previous-report",
+        help="Optional path to the previous calendar day's Markdown report. If omitted, infer it from a standard report path.",
+    )
     return parser.parse_args()
 
 
@@ -48,6 +56,19 @@ def load_json(path: Path) -> dict[str, Any]:
 def has_heading(report: str, keyword: str) -> bool:
     pattern = rf"^##+\s+.*{re.escape(keyword)}.*$"
     return re.search(pattern, report, flags=re.MULTILINE) is not None
+
+
+def heading_section(report: str, keyword: str) -> str:
+    pattern = rf"^(##+)\s+.*{re.escape(keyword)}.*$"
+    match = re.search(pattern, report, flags=re.MULTILINE)
+    if not match:
+        return ""
+    level = len(match.group(1))
+    following = report[match.end() :]
+    next_heading = re.search(rf"^#{{1,{level}}}\s+", following, flags=re.MULTILINE)
+    if not next_heading:
+        return following.strip()
+    return following[: next_heading.start()].strip()
 
 
 def find_workspace_heading(report: str, workspace: str) -> re.Match[str] | None:
@@ -143,15 +164,108 @@ def check_sensitive_content(report: str, errors: list[str]) -> None:
             errors.append(f"possible sensitive value in report: {excerpt[:120]}")
 
 
+def is_concrete_todo(text: str) -> bool:
+    normalized = re.sub(r"^\[[ xX]\]\s*", "", text).strip()
+    if not normalized:
+        return False
+    if TODO_PLACEHOLDER_PATTERN.search(normalized) and len(normalized) <= 40:
+        return False
+    return True
+
+
+def extract_bullet_items(text: str) -> list[str]:
+    items: list[str] = []
+    for line in text.splitlines():
+        match = re.match(r"\s*(?:[-*]|\d+[.)])\s+(?:\[[ xX]\]\s*)?(.+?)\s*$", line)
+        if match and is_concrete_todo(match.group(1)):
+            items.append(match.group(1).strip())
+    return items
+
+
+def dedupe_items(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in items:
+        key = re.sub(r"\s+", " ", item).strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def extract_todo_items(report: str) -> list[str]:
+    items: list[str] = []
+    global_section = heading_section(report, "下一个工作日待办")
+    if global_section:
+        items.extend(extract_bullet_items(global_section))
+
+    label_matches = list(re.finditer(r"(?m)^\s*下一个工作日待办[:：]\s*(.*)$", report))
+    for index, match in enumerate(label_matches):
+        inline = match.group(1).strip()
+        if inline and is_concrete_todo(inline):
+            items.append(inline)
+            continue
+        start = match.end()
+        end = label_matches[index + 1].start() if index + 1 < len(label_matches) else len(report)
+        block = report[start:end]
+        block = re.split(
+            r"(?m)^\s*(?:今日主线|完成事项|关键文件变化|验证/运行结果|风险或遗留事项)[:：]\s*",
+            block,
+            maxsplit=1,
+        )[0]
+        items.extend(extract_bullet_items(block))
+
+    return dedupe_items(items)
+
+
+def infer_previous_report_path(report_path: Path) -> Path | None:
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})\.md", report_path.name)
+    if not match or report_path.parent.parent == report_path.parent:
+        return None
+    try:
+        current_date = datetime.strptime(report_path.stem, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    previous_date = current_date - timedelta(days=1)
+    report_root = report_path.parent.parent
+    return report_root / previous_date.strftime("%Y-%m") / f"{previous_date:%Y-%m-%d}.md"
+
+
+def check_previous_todo_review(previous_report: Path | None, report: str, errors: list[str], warnings: list[str]) -> None:
+    if previous_report is None or not previous_report.exists():
+        return
+    previous_text = previous_report.read_text(encoding="utf-8", errors="ignore")
+    previous_todos = extract_todo_items(previous_text)
+    if not previous_todos:
+        return
+
+    review_section = heading_section(report, "昨日待办") or heading_section(report, "待办完成情况")
+    if not review_section:
+        errors.append(
+            f"previous report has {len(previous_todos)} todo(s), but current report lacks a previous-todo review section"
+        )
+        return
+    if not TODO_STATUS_PATTERN.search(review_section):
+        warnings.append("previous-todo review section does not include explicit status labels")
+
+    next_todo_section = heading_section(report, "下一个工作日待办")
+    if re.search(r"未完成|部分完成", review_section) and not next_todo_section:
+        warnings.append("previous-todo review has unfinished items but the next-workday todo section was not found")
+
+
 def main() -> int:
     args = parse_args()
     data = load_json(Path(args.collector_json))
-    report = Path(args.report_md).read_text(encoding="utf-8", errors="ignore")
+    report_path = Path(args.report_md)
+    report = report_path.read_text(encoding="utf-8", errors="ignore")
+    previous_report = Path(args.previous_report) if args.previous_report else infer_previous_report_path(report_path)
 
     errors: list[str] = []
     warnings: list[str] = []
     check_required_sections(report, errors)
     check_workspace_coverage(data, report, errors, warnings)
+    check_previous_todo_review(previous_report, report, errors, warnings)
     check_sensitive_content(report, errors)
 
     for warning in warnings:
