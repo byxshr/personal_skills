@@ -9,7 +9,7 @@ description: Generate high-quality Codex work daily reports from Codex session h
 
 1. Determine the report date and time window in `Asia/Singapore`.
    - Default report date: the current date in `Asia/Singapore`.
-   - Default window: previous day 22:00 to report date 22:00 in `Asia/Singapore`.
+   - Default window: previous day 20:00 to report date 20:00 in `Asia/Singapore`.
    - Convert the window to UTC only for filtering timestamps.
 2. Run `scripts/collect_codex_activity.py` to collect Codex session events by timestamp and group them by `cwd`; save the collector JSON to a temporary or sidecar file for report drafting and validation.
 3. Read `references/report-sop.md` before drafting the final report.
@@ -29,14 +29,16 @@ Run:
 ```bash
 python3 /Users/bianyuxin/.codex/skills/codex-daily-report/scripts/collect_codex_activity.py \
   --date YYYY-MM-DD \
-  --tz Asia/Singapore
+  --tz Asia/Singapore \
+  --cutoff-hour 20
 ```
 
 Useful options:
 
 - `--report-root /path/to/work_report`
-- `--window-start-utc 2026-07-06T14:00:00Z`
-- `--window-end-utc 2026-07-07T14:00:00Z`
+- `--cutoff-hour 20`
+- `--window-start-utc 2026-07-06T12:00:00Z`
+- `--window-end-utc 2026-07-07T12:00:00Z`
 - `--pretty`
 
 The collector scans `~/.codex/sessions` and `~/.codex/archived_sessions`, filters by event timestamp, and includes sessions created before the window if they have activity inside the window.

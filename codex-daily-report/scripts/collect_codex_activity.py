@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--date", help="Report date in local timezone, YYYY-MM-DD")
     parser.add_argument("--tz", default="Asia/Singapore", help="Report timezone")
+    parser.add_argument("--cutoff-hour", type=int, default=20, help="Local report cutoff hour, 0-23")
     parser.add_argument("--window-start-utc", help="Inclusive UTC start, ISO format")
     parser.add_argument("--window-end-utc", help="Exclusive UTC end, ISO format")
     parser.add_argument("--codex-home", default=os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
@@ -70,12 +71,14 @@ def compute_window(args: argparse.Namespace) -> tuple[datetime, datetime, str, s
 
     if ZoneInfo is None:
         raise RuntimeError("zoneinfo is required for timezone-aware date windows")
+    if not 0 <= args.cutoff_hour <= 23:
+        raise ValueError("--cutoff-hour must be between 0 and 23")
     tz = ZoneInfo(args.tz)
     if args.date:
         report_date = datetime.strptime(args.date, "%Y-%m-%d").date()
     else:
         report_date = datetime.now(tz).date()
-    local_end = datetime.combine(report_date, time(22, 0), tzinfo=tz)
+    local_end = datetime.combine(report_date, time(args.cutoff_hour, 0), tzinfo=tz)
     local_start = local_end - timedelta(days=1)
     return (
         local_start.astimezone(timezone.utc),
