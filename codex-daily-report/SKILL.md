@@ -1,89 +1,92 @@
 ---
 name: codex-daily-report
-description: Generate high-quality Codex work daily reports from Codex session history, git/workspace evidence, and scheduled-task context. Use when Codex needs to create, regenerate, improve, or automate a daily work report, especially reports that must cover all active Codex workspaces in a time window, group work by project path, produce next-workday todos, or save Markdown reports under a YYYY-MM/YYYY-MM-DD.md structure.
+description: Generate, regenerate, improve, or automate Chinese daily work reports from Codex and Claude Code session history plus git/workspace evidence. Use when a report must cover all active AI coding workspaces in a time window, merge related implementation and code-review activity across tools into actual tasks, review previous todos, or save Markdown under a YYYY-MM/YYYY-MM-DD.md structure.
 ---
 
-# Codex Daily Report
+# Daily Work Report
 
 ## Workflow
 
-1. Determine the report date and time window in `Asia/Singapore`.
-   - Default report date: the current date in `Asia/Singapore`.
-   - Default window: previous day 20:00 to report date 20:00 in `Asia/Singapore`.
-   - Convert the window to UTC only for filtering timestamps.
-2. Run `scripts/collect_codex_activity.py` to collect Codex session events by timestamp and group them by `cwd`; save the collector JSON to a temporary or sidecar file for report drafting and validation.
-3. Locate the previous calendar day's report under the same report root, if it exists. Review its `下一个工作日待办` items against the current window's evidence before drafting today's report.
-4. Read `references/report-sop.md` before drafting the final report.
-5. For each active workspace found by the script, add verifiable context:
-   - `git log --since ... --until ... --oneline --decorate --stat`
-   - `git status --short --branch --untracked-files=no`
-   - collector evidence such as command results, changed files, test results, risk signals, and remote/check metrics
-   - relevant file paths, remote command outputs, or test results mentioned in Codex sessions
-6. Write or update the Markdown report under the requested report root. Default root:
-   `/Users/bianyuxin/hope-jobs/work_report`.
-7. Run `scripts/validate_report.py` with the collector JSON, Markdown report, and previous report path when available. Fix validation errors before finishing; treat warnings as prompts to add available evidence.
+1. Determine the report date and window in `Asia/Singapore`.
+   - Use the latest completed cutoff when the task runs before the cutoff.
+   - Default window: previous day 20:00 to report date 20:00.
+   - Convert to UTC only for event filtering.
+2. Run `scripts/collect_daily_activity.py` with both sources and save its schema-v2 JSON beside the report.
+3. Check `sources` warnings. Treat an unavailable source as an evidence limitation, not as proof of no work.
+4. Locate the previous calendar day's report and review its `下一个工作日待办` against evidence from both sources.
+5. Read `references/report-sop.md` before drafting.
+6. For every canonical workspace in the collector:
+   - inspect same-window Git history and current tracked status when available;
+   - use normalized activities, task groups, changed files, tests, risks, commits, branches, and source roles;
+   - retain uninspectable workspaces with a limitation note.
+7. Draft by project/workspace, then by actual task. Merge linked Codex implementation, Claude Code review, fixes, and validation into one task.
+8. Add `<!-- activities: ID... -->` immediately below each task heading, listing every activity consumed by that task exactly once.
+9. Write `<report-root>/YYYY-MM/YYYY-MM-DD.md`, then run `scripts/validate_report.py`. Fix errors and evidence-backed warnings before finishing.
 
 ## Collector
 
 Run:
 
 ```bash
-python3 /Users/bianyuxin/.codex/skills/codex-daily-report/scripts/collect_codex_activity.py \
+python3 /Users/bianyuxin/.codex/skills/codex-daily-report/scripts/collect_daily_activity.py \
   --date YYYY-MM-DD \
   --tz Asia/Singapore \
-  --cutoff-hour 20
+  --cutoff-hour 20 \
+  --sources codex,claude-code \
+  --pretty
 ```
 
 Useful options:
 
-- `--report-root /path/to/work_report`
-- `--cutoff-hour 20`
-- `--window-start-utc 2026-07-06T12:00:00Z`
-- `--window-end-utc 2026-07-07T12:00:00Z`
-- `--pretty`
+- `--codex-home /path/to/.codex`
+- `--claude-home /path/to/.claude`
+- `--window-start-utc 2026-07-26T12:00:00Z`
+- `--window-end-utc 2026-07-27T12:00:00Z`
 
-The collector scans `~/.codex/sessions` and `~/.codex/archived_sessions`, filters by event timestamp, and includes sessions created before the window if they have activity inside the window.
+The unified collector scans Codex sessions and Claude Code `projects/**/*.jsonl`, filters each event by timestamp, rolls Claude subagents into their parent activity, resolves workspace evidence, and emits:
 
-The collector output keeps the legacy workspace fields and also includes:
+- `sources`: availability, scanned files, matched sessions/events, and warnings
+- `activities`: normalized user-task activity with stable IDs and source roles
+- `relations`: evidence-based cross-source merge decisions
+- `task_groups`: connected activities that must be reported as one task
+- `workspaces`: backward-compatible grouped evidence
 
-- `command_results`: associated function-call outputs with exit codes and short excerpts
-- `evidence_summary`: command category counts, exit code counts, commits, branches, and metrics
-- `changed_files`: file paths inferred from patches, git status, or git stats
-- `test_results`: parsed test result summaries
-- `risk_signals`: nonzero exits and generic error/failure signals
+Keep `scripts/collect_codex_activity.py` available for Codex-only compatibility.
 
 ## Output
 
-Save the report as:
+Write Chinese Markdown headed `# 工作日报` and include:
 
-```text
-<report-root>/YYYY-MM/YYYY-MM-DD.md
-```
-
-The report must be Chinese Markdown and include:
-
-- 标题
 - 报告日期
 - 统计时间范围
-- 信息来源说明
-- 昨日待办完成情况, when a previous report with todos exists
+- 信息来源说明 for Codex and Claude Code
+- 昨日待办完成情况, when previous todos exist
 - 按项目/工作区分组的工作概览
-- 完成事项
-- 关键文件变化
-- 验证/运行过的命令
-- 风险或遗留事项
-- 下一个工作日待办
-- 工作和个人成长建议, only when the window provides concrete evidence
+- task-level goals, source stages, outcomes, file changes, validation, review findings, risks, and next actions
+- global key changes, validation, risks, and next-workday todos
+- 工作和个人成长建议 only when concrete evidence supports them
 
-Validate the report with:
+Use task sections like:
+
+```markdown
+### `/path/to/workspace`
+
+#### 任务：完成某项交付并闭环审查
+<!-- activities: codex-abc claude-code-def -->
+
+来源及阶段：
+
+- Codex：实施
+- Claude Code：Code Review、验证
+```
+
+Validate with:
 
 ```bash
 python3 /Users/bianyuxin/.codex/skills/codex-daily-report/scripts/validate_report.py \
-  /path/to/collector.json \
+  <report-root>/YYYY-MM/YYYY-MM-DD.collector.json \
   <report-root>/YYYY-MM/YYYY-MM-DD.md \
   --previous-report <report-root>/PREVIOUS-YYYY-MM/PREVIOUS-YYYY-MM-DD.md
 ```
 
-Use `--previous-report` only when the previous calendar day's report file exists. The validator can also infer the previous report from a standard `<report-root>/YYYY-MM/YYYY-MM-DD.md` path.
-
-If no confirmed Codex work exists in the window, still create the file and write `无工作进展`.
+If both sources are readable and contain no confirmed work, still write the report and state `无工作进展`. If either source is unavailable, state the evidence limitation instead of making that conclusion.

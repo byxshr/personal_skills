@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Daily Report"
-  short_description: "Generate cross-workspace Codex daily reports"
-  default_prompt: "Use $codex-daily-report to generate today's Codex work report."
+  short_description: "Generate merged Codex and Claude Code work reports"
+  default_prompt: "Use $codex-daily-report to generate today's work report from Codex and Claude Code activity."

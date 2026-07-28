@@ -21,9 +21,13 @@ except ImportError:  # pragma: no cover
 SECRET_PATTERNS = [
     re.compile(r"(?i)(authorization\s*[:=]\s*)(['\"]?)[^,'\"\s}]+"),
     re.compile(r"(?i)(token\s*[:=]\s*)(['\"]?)[^,'\"\s}]+"),
+    re.compile(r"(?i)((?:api|access|refresh)[_-]?(?:key|token)\s*[:=]\s*)(['\"]?)[^,'\"\s}]+"),
     re.compile(r"(?i)(password\s*[:=]\s*)(['\"]?)[^,'\"\s}]+"),
     re.compile(r"(?i)(secret\s*[:=]\s*)(['\"]?)[^,'\"\s}]+"),
     re.compile(r"(?i)(app[_-]?id\s*[:=]\s*)(['\"]?)[^,'\"\s}]+"),
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{12,}"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
 ]
 EXIT_CODE_RE = re.compile(r"Process exited with code (-?\d+)")
 COMMIT_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
@@ -91,7 +95,12 @@ def compute_window(args: argparse.Namespace) -> tuple[datetime, datetime, str, s
 def redact(text: str) -> str:
     out = text
     for pattern in SECRET_PATTERNS:
-        out = pattern.sub(r"\1\2<redacted>", out)
+        def replacement(match: re.Match[str]) -> str:
+            prefix = match.group(1) if match.lastindex and match.lastindex >= 1 else ""
+            quote = match.group(2) if match.lastindex and match.lastindex >= 2 else ""
+            return f"{prefix}{quote}<redacted>"
+
+        out = pattern.sub(replacement, out)
     return out
 
 
